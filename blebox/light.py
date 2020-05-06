@@ -1,5 +1,6 @@
 """BleBox light entities implementation."""
 import logging
+from datetime import timedelta
 
 from blebox_uniapi.error import BadOnValueError
 
@@ -7,9 +8,11 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_HS_COLOR,
     ATTR_WHITE_VALUE,
+    ATTR_TRANSITION,
     SUPPORT_BRIGHTNESS,
     SUPPORT_COLOR,
     SUPPORT_WHITE_VALUE,
+    SUPPORT_TRANSITION,
     Light,
 )
 from homeassistant.exceptions import PlatformNotReady
@@ -62,7 +65,8 @@ class BleBoxLightEntity(CommonEntity, Light):
         white = SUPPORT_WHITE_VALUE if self._feature.supports_white else 0
         color = SUPPORT_COLOR if self._feature.supports_color else 0
         brightness = SUPPORT_BRIGHTNESS if self._feature.supports_brightness else 0
-        return white | color | brightness
+        transition = SUPPORT_TRANSITION if self._feature.supports_fade_speed else 0
+        return white | color | brightness | transition
 
     @property
     def is_on(self):
@@ -95,6 +99,7 @@ class BleBoxLightEntity(CommonEntity, Light):
         white = kwargs.get(ATTR_WHITE_VALUE, None)
         hs_color = kwargs.get(ATTR_HS_COLOR, None)
         brightness = kwargs.get(ATTR_BRIGHTNESS, None)
+        transition = kwargs.get(ATTR_TRANSITION, None)
 
         feature = self._feature
         value = feature.sensible_on_value
@@ -109,12 +114,23 @@ class BleBoxLightEntity(CommonEntity, Light):
             raw_rgb = color_rgb_to_hex(*color_hs_to_RGB(*hs_color))
             value = feature.apply_color(value, raw_rgb)
 
+        if transition is not None:
+            transition = feature.apply_fade_speed(
+                timedelta(seconds=transition))
+
         try:
-            await self._feature.async_on(value)
+            await self._feature.async_on(value, transition)
         except BadOnValueError as ex:
             # TODO: coverage
             _LOGGER.error(f"turning on failed ({value}): {ex}")
 
     async def async_turn_off(self, **kwargs):
         """Turn the light off."""
-        await self._feature.async_off()
+
+        transition = kwargs.get(ATTR_TRANSITION, None)
+
+        if transition is not None:
+            transition = self._feature.apply_fade_speed(
+                timedelta(seconds=transition))
+
+        await self._feature.async_off(transition)
